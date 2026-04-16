@@ -367,7 +367,7 @@ function generate(){
 
   const tbody=document.getElementById('schedBody');
   tbody.innerHTML='';
-  let shootInserted=false, makeupInserted=false;
+  let prevPhase=null;
 
   EMAILS.forEach(email=>{
     const firstSend=addDays(start,email.startOffset);
@@ -376,14 +376,11 @@ function generate(){
       ? new Date(Math.min(lastRaw.getTime(),addDays(makeup,-1).getTime()))
       : lastRaw;
 
-    if(!shootInserted && firstSend>=shootStart){
+    // Insert Photo Sessions milestone at the pre→post phase transition
+    if(prevPhase==='pre' && email.phase==='post'){
       tbody.insertAdjacentHTML('beforeend',`<tr class="milestone-row"><td colspan="6">📷 &nbsp;Photo Sessions — ${shootLabel}</td></tr>`);
-      shootInserted=true;
     }
-    if(!makeupInserted && firstSend>=makeup){
-      tbody.insertAdjacentHTML('beforeend',`<tr class="milestone-row"><td colspan="6">📷 &nbsp;Makeup Sessions — ${fmtDate(makeup)}</td></tr>`);
-      makeupInserted=true;
-    }
+    prevPhase=email.phase;
 
     const phaseTag=email.phase==='pre'
       ?'<span class="phase-pre">Pre-Shoot</span>'
@@ -402,8 +399,8 @@ function generate(){
       </tr>`);
   });
 
-  if(!shootInserted) tbody.insertAdjacentHTML('beforeend',`<tr class="milestone-row"><td colspan="6">📷 &nbsp;Photo Sessions — ${shootLabel}</td></tr>`);
-  if(!makeupInserted) tbody.insertAdjacentHTML('beforeend',`<tr class="milestone-row"><td colspan="6">📷 &nbsp;Makeup Sessions — ${fmtDate(makeup)}</td></tr>`);
+  // Append Makeup Sessions milestone after all emails
+  tbody.insertAdjacentHTML('beforeend',`<tr class="milestone-row"><td colspan="6">💄 &nbsp;Makeup Sessions — ${fmtDate(makeup)}</td></tr>`);
 
   const grid=document.getElementById('sendGrid');
   grid.innerHTML='';
