@@ -193,7 +193,7 @@
 
       <!-- Col 2: Shoot range group -->
       <div>
-        <div class="shoot-group-label">Photo Session Dates</div>
+        <div class="shoot-group-label">Shoot Date <span style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0">(optional)</span></div>
         <div class="shoot-group-wrap">
           <div class="field">
             <label class="lbl-shoot">First Day</label>
@@ -206,6 +206,7 @@
             <span class="hint">Last on-site photography day</span>
           </div>
         </div>
+        <span class="hint" style="display:block;margin-top:6px">Leave blank to base all email dates on Makeup Date</span>
       </div>
 
       <!-- Col 3: Makeup -->
@@ -306,8 +307,6 @@ function generate(){
 
   const missing=[];
   if(!sv)  missing.push('Booking Start Date');
-  if(!ssv) missing.push('Photo Sessions First Day');
-  if(!sev) missing.push('Photo Sessions Last Day');
   if(!mkv) missing.push('Makeup Session Date');
   if(missing.length){
     errEl.textContent='Please fill in: '+missing.join(', ');
@@ -316,38 +315,55 @@ function generate(){
     return;
   }
 
-  const start      = new Date(sv +'T00:00:00');
-  const shootStart = new Date(ssv+'T00:00:00');
-  const shootEnd   = new Date(sev+'T00:00:00');
-  const makeup     = new Date(mkv+'T00:00:00');
+  const start  = new Date(sv +'T00:00:00');
+  const makeup = new Date(mkv+'T00:00:00');
+  const hasShoot = ssv && sev;
+  let shootStart, shootEnd;
 
-  if(shootEnd < shootStart){
-    errEl.textContent='Photo Sessions Last Day must be on or after First Day.';
-    errEl.style.display='block'; return;
-  }
-  if(makeup <= shootEnd){
-    errEl.textContent='Makeup Session Date must be after the last photo session day.';
-    errEl.style.display='block'; return;
+  if(hasShoot){
+    shootStart = new Date(ssv+'T00:00:00');
+    shootEnd   = new Date(sev+'T00:00:00');
+    if(shootEnd < shootStart){
+      errEl.textContent='Shoot Date Last Day must be on or after First Day.';
+      errEl.style.display='block'; return;
+    }
+    if(makeup <= shootEnd){
+      errEl.textContent='Makeup Session Date must be after the last shoot day.';
+      errEl.style.display='block'; return;
+    }
   }
   errEl.style.display='none';
 
-  const sameDay   = shootStart.getTime()===shootEnd.getTime();
-  const shootDays = daysBetween(shootStart,shootEnd)+1;
-  const shootLabel= sameDay ? fmtDate(shootStart) : fmtShort(shootStart)+' – '+fmtDate(shootEnd);
-  const totalDays = daysBetween(start,makeup);
-  const shootDay  = daysBetween(start,shootStart);
-  const mkDay     = daysBetween(start,makeup);
+  // When no shoot dates, scale all offsets so the campaign ends at the makeup date.
+  // Normal schedule runs 0–96 days; we scale that span to 0–mkDay.
+  const MAKEUP_ANCHOR = 96;
+  const mkDay    = daysBetween(start, makeup);
+  const dayScale = hasShoot ? 1 : mkDay / MAKEUP_ANCHOR;
+
+  const sameDay    = hasShoot && shootStart.getTime()===shootEnd.getTime();
+  const shootDays  = hasShoot ? daysBetween(shootStart,shootEnd)+1 : 0;
+  const shootLabel = hasShoot ? (sameDay ? fmtDate(shootStart) : fmtShort(shootStart)+' – '+fmtDate(shootEnd)) : null;
+  const shootDay   = hasShoot ? daysBetween(start,shootStart) : null;
+
+  // Stats row
+  const shootStatCard = hasShoot ? `
+    <div class="stat-card">
+      <div class="stat-label">Shoot Date</div>
+      <div class="stat-value" style="font-size:.85rem;font-family:'DM Sans',sans-serif;font-weight:600;line-height:1.35">${shootLabel}</div>
+      <div class="stat-sub">${shootDays} day${shootDays>1?'s':''} · starts Day ${shootDay}</div>
+    </div>` : `
+    <div class="stat-card" style="border:1px dashed var(--mid);background:var(--paper)">
+      <div class="stat-label">Shoot Date</div>
+      <div class="stat-value" style="font-size:.8rem;font-family:'DM Sans',sans-serif;font-weight:500;color:var(--muted)">Not set</div>
+      <div class="stat-sub">Schedule scaled to Makeup Date</div>
+    </div>`;
 
   document.getElementById('statsRow').innerHTML=`
     <div class="stat-card">
       <div class="stat-label">Campaign Start</div>
       <div class="stat-value" style="font-size:.9rem;font-family:'DM Sans',sans-serif;font-weight:600">${fmtDate(start)}</div>
     </div>
-    <div class="stat-card">
-      <div class="stat-label">Photo Sessions</div>
-      <div class="stat-value" style="font-size:.85rem;font-family:'DM Sans',sans-serif;font-weight:600;line-height:1.35">${shootLabel}</div>
-      <div class="stat-sub">${shootDays} day${shootDays>1?'s':''} · starts Day ${shootDay}</div>
-    </div>
+    ${shootStatCard}
     <div class="stat-card">
       <div class="stat-label">Makeup Sessions</div>
       <div class="stat-value" style="font-size:.9rem;font-family:'DM Sans',sans-serif;font-weight:600">${fmtDate(makeup)}</div>
@@ -355,7 +371,7 @@ function generate(){
     </div>
     <div class="stat-card">
       <div class="stat-label">Total Campaign</div>
-      <div class="stat-value">${totalDays}</div>
+      <div class="stat-value">${mkDay}</div>
       <div class="stat-sub">days</div>
     </div>
     <div class="stat-card">
@@ -365,49 +381,57 @@ function generate(){
     </div>
   `;
 
+  // Schedule table
   const tbody=document.getElementById('schedBody');
   tbody.innerHTML='';
   let prevPhase=null;
 
   EMAILS.forEach(email=>{
-    const firstSend=addDays(start,email.startOffset);
-    const lastRaw  =addDays(start,email.startOffset+email.interval*(email.sends-1));
-    const lastSend =email.phase==='post'
-      ? new Date(Math.min(lastRaw.getTime(),addDays(makeup,-1).getTime()))
+    const scaledOffset   = Math.round(email.startOffset * dayScale);
+    const scaledInterval = Math.round(email.interval * dayScale);
+    const firstSend = addDays(start, scaledOffset);
+    const lastRaw   = addDays(start, scaledOffset + scaledInterval*(email.sends-1));
+    const lastSend  = email.phase==='post'
+      ? new Date(Math.min(lastRaw.getTime(), addDays(makeup,-1).getTime()))
       : lastRaw;
 
-    // Insert Photo Sessions milestone at the pre→post phase transition
-    if(prevPhase==='pre' && email.phase==='post'){
-      tbody.insertAdjacentHTML('beforeend',`<tr class="milestone-row"><td colspan="6">📷 &nbsp;Photo Sessions — ${shootLabel}</td></tr>`);
+    // Insert Shoot Date milestone at pre→post transition (only when shoot dates provided)
+    if(prevPhase==='pre' && email.phase==='post' && hasShoot){
+      tbody.insertAdjacentHTML('beforeend',
+        `<tr class="milestone-row"><td colspan="6">📷 &nbsp;Shoot Date — ${shootLabel}</td></tr>`);
     }
-    prevPhase=email.phase;
+    prevPhase = email.phase;
 
-    const phaseTag=email.phase==='pre'
-      ?'<span class="phase-pre">Pre-Shoot</span>'
-      :'<span class="phase-post">Makeup</span>';
-    const capped=email.phase==='post' && lastRaw>addDays(makeup,-1);
-    const noteStr=capped?' <span style="font-size:10px;color:var(--muted)">(capped before makeup)</span>':'';
+    const phaseTag = email.phase==='pre'
+      ? '<span class="phase-pre">Pre-Shoot</span>'
+      : '<span class="phase-post">Makeup</span>';
+    const capped  = email.phase==='post' && lastRaw > addDays(makeup,-1);
+    const noteStr = capped ? ' <span style="font-size:10px;color:var(--muted)">(capped before makeup)</span>' : '';
 
     tbody.insertAdjacentHTML('beforeend',`
       <tr>
         <td><div class="email-name">Email ${email.name}</div><div class="email-desc">${email.desc}</div></td>
         <td>${phaseTag}</td>
-        <td><div class="date-val">${fmtDate(firstSend)}</div><div class="day-num">Day ${email.startOffset}</div></td>
+        <td><div class="date-val">${fmtDate(firstSend)}</div><div class="day-num">Day ${scaledOffset}</div></td>
         <td><div class="date-val">${fmtDate(lastSend)}${noteStr}</div><div class="day-num">Day ${daysBetween(start,lastSend)}</div></td>
-        <td style="color:var(--muted);font-size:12px">Every 4 days<br>8:00 am</td>
+        <td style="color:var(--muted);font-size:12px">Every ${scaledInterval} days<br>8:00 am</td>
         <td style="font-weight:600;color:var(--navy)">${email.sends}</td>
       </tr>`);
   });
 
-  // Append Makeup Sessions milestone after all emails
-  tbody.insertAdjacentHTML('beforeend',`<tr class="milestone-row"><td colspan="6">💄 &nbsp;Makeup Sessions — ${fmtDate(makeup)}</td></tr>`);
+  // Always append Makeup Sessions milestone at the end
+  tbody.insertAdjacentHTML('beforeend',
+    `<tr class="milestone-row"><td colspan="6">💄 &nbsp;Makeup Sessions — ${fmtDate(makeup)}</td></tr>`);
 
+  // Send date grid
   const grid=document.getElementById('sendGrid');
   grid.innerHTML='';
   ['Email','Send 1','Send 2','Send 3','Send 4','Send 5'].forEach(h=>{
     const d=document.createElement('div'); d.className='sg-header'; d.textContent=h; grid.appendChild(d);
   });
   EMAILS.forEach(email=>{
+    const scaledOffset   = Math.round(email.startOffset * dayScale);
+    const scaledInterval = Math.round(email.interval * dayScale);
     const nm=document.createElement('div');
     nm.className='sg-name';
     nm.textContent=`Email ${email.name}`;
@@ -415,7 +439,7 @@ function generate(){
     nm.style.color=email.phase==='pre'?'var(--pre)':'var(--post)';
     grid.appendChild(nm);
     for(let s=0;s<email.sends;s++){
-      const offset=email.startOffset+s*email.interval;
+      const offset=scaledOffset+s*scaledInterval;
       const d=addDays(start,offset);
       const cell=document.createElement('div');
       cell.className='sg-cell';
